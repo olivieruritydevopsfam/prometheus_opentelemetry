@@ -1,0 +1,20 @@
+# Maven / Java
+target/
+*.class
+*.jar
+!**/.mvn/wrapper/maven-wrapper.jar
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# macOS
+.DS_Store
+
+# Environnement local (identifiants)
+.env
