@@ -28,8 +28,9 @@ exporters:
     # Les attributs de ressource restent dans target_info (évite d'exploser la cardinalité)
     resource_to_telemetry_conversion:
       enabled: false
-    # Les séries disparaissent si l'app cesse d'émettre
-    metric_expiration: 5m
+    # Les séries disparaissent 1 min après le dernier export de l'app (export toutes les 10 s) :
+    # c'est ce délai qui permet à JavaDemoMetricsAbsent de se déclencher vite.
+    metric_expiration: 1m
   # Logs synthétiques dans `docker compose logs otel-collector` pour le debug
   debug:
     verbosity: basic
