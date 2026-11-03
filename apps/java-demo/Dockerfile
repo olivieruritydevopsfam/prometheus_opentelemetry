@@ -14,7 +14,9 @@ FROM eclipse-temurin:21.0.8_9-jre
 ARG OTEL_AGENT_VERSION=2.20.1
 WORKDIR /app
 
-# Agent OpenTelemetry Java téléchargé au build
+# Agent OpenTelemetry Java téléchargé au build.
+# Le dossier est créé avant : sinon ADD --chmod l'applique aussi au dossier (illisible).
+RUN mkdir -p /otel
 ADD --chmod=644 \
     https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OTEL_AGENT_VERSION}/opentelemetry-javaagent.jar \
     /otel/opentelemetry-javaagent.jar
