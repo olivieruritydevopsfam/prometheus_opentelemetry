@@ -38,10 +38,36 @@ for m in jvm_memory_used_bytes jvm_gc_duration_seconds_count jvm_thread_count jv
   [[ $n -gt 0 ]] && ok "$m ($n séries)" || ko "$m absente"
 done
 
+echo "c') JVM sans agent (JMX)"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${APP_JMX:-http://localhost:8081}/hello")
+[[ $code == 200 ]] && ok "java-demo-jmx /hello -> $code" || ko "java-demo-jmx /hello -> $code"
+for m in jvm_memory_used_bytes jvm_gc_collection_count_total jvm_thread_count tomcat_request_count_total; do
+  n=$(prom_count "$m{job=\"java-demo-jmx\"}")
+  [[ $n -gt 0 ]] && ok "$m ($n séries)" || ko "$m absente"
+done
+n=$(prom_count 'jvm_gc_duration_seconds_count{job="java-demo-jmx"} or http_server_request_duration_seconds_count{job="java-demo-jmx"}')
+[[ $n -eq 0 ]] && ok "aucune métrique d'agent pour java-demo-jmx" || ko "java-demo-jmx exporte des métriques d'agent ($n séries)"
+
 echo "d) Grafana"
 curl -sf -u "$GF_AUTH" "$GRAFANA/api/datasources/uid/prometheus/health" | grep -q '"status":"OK"' \
   && ok "datasource Prometheus joignable" || ko "datasource Prometheus en erreur"
-curl -sf -u "$GF_AUTH" "$GRAFANA/api/dashboards/uid/java-demo-otel" | grep -q '"provisioned":true' \
-  && ok "dashboard java-demo-otel provisionné" || ko "dashboard java-demo-otel introuvable"
+for uid in java-demo-otel java-jmx; do
+  curl -sf -u "$GF_AUTH" "$GRAFANA/api/dashboards/uid/$uid" | grep -q '"provisioned":true' \
+    && ok "dashboard $uid provisionné" || ko "dashboard $uid introuvable"
+done
+
+echo "e) Alerting"
+read -r health firing < <(curl -s "$PROM/api/v1/rules" | python3 -c '
+import sys, json
+rules = [r for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"]]
+bad = sum(r["health"] == "err" for r in rules)
+firing = ",".join(sorted({r["name"] for r in rules if r.get("state") == "firing"})) or "-"
+print(f"{len(rules)-bad}/{len(rules)}", firing)' 2>/dev/null || echo "0/0 ?")
+[[ ${health%/*} == "${health#*/}" && $health != 0/0 ]] && ok "règles saines ($health)" || ko "règles en erreur ($health)"
+[[ $firing == "-" ]] && ok "aucune alerte active" || ko "alertes actives : $firing"
+curl -sf "${ALERTMANAGER:-http://localhost:9093}/-/ready" >/dev/null \
+  && ok "Alertmanager prêt" || ko "Alertmanager injoignable"
+n=$(prom_count 'prometheus_notifications_alertmanagers_discovered == 1')
+[[ $n -gt 0 ]] && ok "Prometheus connecté à Alertmanager" || ko "Prometheus ne voit pas Alertmanager"
 
 exit $fail

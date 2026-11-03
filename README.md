@@ -7,32 +7,37 @@ Testé sur macOS Apple Silicon (arm64) avec OrbStack.
 ## Architecture
 
 ```
- ┌──────────────┐  HTTP   ┌──────────────────────────┐
- │ load-generator│───────▶│ java-demo (Spring Boot)  │
- │   (k6)        │        │ + opentelemetry-javaagent│
- └──────────────┘         └────────────┬─────────────┘
-                                       │ OTLP/HTTP :4318 (push toutes les 10 s)
-                          ┌────────────▼─────────────┐
-                          │ OpenTelemetry Collector  │
-                          │ otlp → memory_limiter,   │
-                          │ batch → prometheus,debug │
-                          └────────────┬─────────────┘
-                                       │ scrape :8889 (+ :8888 métriques internes)
-                          ┌────────────▼─────────────┐
-                          │ Prometheus               │
-                          └────────────┬─────────────┘
-                                       │ PromQL
-                          ┌────────────▼─────────────┐
-                          │ Grafana (datasource +    │
-                          │ dashboard provisionnés)  │
-                          └──────────────────────────┘
+                ┌─────────────────────────┐        ┌──────────────────────────┐
+  load-        │ java-demo               │        │ java-demo-jmx            │
+  generator ──▶│ + opentelemetry-javaagent│        │ SANS agent, JMX :9010    │◀── load-generator
+  (k6)         └────────────┬────────────┘        └────────────┬─────────────┘
+                            │ OTLP/HTTP (push 10 s)            │ JMX/RMI (lecture des MBeans)
+                            │                     ┌────────────▼─────────────┐
+                            │                     │ jmx-scraper (OTel)       │
+                            │                     └────────────┬─────────────┘
+                            │                                  │ OTLP/HTTP (push 10 s)
+                          ┌─▼──────────────────────────────────▼─┐
+                          │ OpenTelemetry Collector              │
+                          │ otlp → memory_limiter, batch →       │
+                          │ prometheus (:8889), debug            │
+                          └──────────────────┬───────────────────┘
+                                             │ scrape :8889 (+ :8888 métriques internes)
+                          ┌──────────────────▼───────────────────┐    alertes   ┌──────────────┐
+                          │ Prometheus (+ règles d'alerte)       │─────────────▶│ Alertmanager │
+                          └──────────────────┬───────────────────┘              └──────┬───────┘
+                                             │ PromQL                                  │
+                          ┌──────────────────▼─────────────────────────────────────────▼┐
+                          │ Grafana : datasources Prometheus + Alertmanager, 2 dashboards │
+                          └───────────────────────────────────────────────────────────────┘
 ```
 
 | Composant | Image / version |
 |---|---|
-| java-demo | Spring Boot 3.5.6, Java 21 (`eclipse-temurin:21.0.8_9-jre`), agent OTel Java 2.20.1 |
+| java-demo, java-demo-jmx | Spring Boot 3.5.6, Java 21 (`eclipse-temurin:21.0.8_9-jre`), agent OTel Java 2.20.1 (java-demo seulement) |
+| jmx-scraper | `opentelemetry-jmx-scraper` 1.61.0-alpha sur `eclipse-temurin:21.0.8_9-jre` |
 | Collector | `otel/opentelemetry-collector-contrib:0.135.0` |
 | Prometheus | `prom/prometheus:v3.6.0` |
+| Alertmanager | `prom/alertmanager:v0.28.1` |
 | Grafana | `grafana/grafana:12.2.0` |
 | Générateur de charge | `grafana/k6:1.3.0` |
 
@@ -40,11 +45,15 @@ Testé sur macOS Apple Silicon (arm64) avec OrbStack.
 
 ```
 apps/java-demo/            App Spring Boot + Dockerfile multi-stage (agent téléchargé au build)
+jmx-scraper/               Image du jmx-scraper + règle JMX maison pour le GC (gc.yaml)
 otel-collector/config.yaml Pipeline metrics du Collector
-prometheus/prometheus.yml  Cibles de scrape
-grafana/provisioning/      Datasource et provider de dashboards
-grafana/dashboards/        Dashboard JSON (généré)
-grafana/tools/             Générateur du dashboard
+prometheus/prometheus.yml  Cibles de scrape, règles, Alertmanager
+prometheus/rules/          Règles d'enregistrement et d'alerte
+prometheus/tests/          Tests unitaires des règles (promtool)
+alertmanager/              Routage, inhibitions
+grafana/provisioning/      Datasources et provider de dashboards
+grafana/dashboards/        Dashboards JSON (générés)
+grafana/tools/             Générateur des dashboards
 load-generator/script.js   Scénario k6
 scripts/check.sh           Vérification de bout en bout
 ```
@@ -84,9 +93,11 @@ volume `grafana-data` n'est pas modifié : faire `docker compose down -v` pour r
 
 | Service | URL |
 |---|---|
-| App | http://localhost:8080/hello, `/slow`, `/error`, `/order`, `/actuator/health` |
-| Prometheus | http://localhost:9090 (cibles : http://localhost:9090/targets) |
-| Grafana | http://localhost:3000 (dashboard *OTel Lab › Java demo — OpenTelemetry*, page d'accueil par défaut) |
+| App (agent) | http://localhost:8080/hello, `/slow`, `/error`, `/order`, `/actuator/health` |
+| App (sans agent, JMX) | http://localhost:8081/hello, mêmes endpoints |
+| Prometheus | http://localhost:9090 (cibles : `/targets`, alertes : `/alerts`) |
+| Alertmanager | http://localhost:9093 |
+| Grafana | http://localhost:3000 : dossier *OTel Lab*, dashboards *Java demo — OpenTelemetry* (accueil) et *JVM via JMX — sans agent* |
 | Collector – exporter Prometheus | http://localhost:8889/metrics |
 | Collector – métriques internes | http://localhost:8888/metrics |
 | Collector – health check | http://localhost:13133 |
@@ -156,6 +167,100 @@ rate(otelcol_exporter_sent_metric_points_total[1m])
 jvm_thread_count * on (job, instance) group_left (service_version) target_info
 ```
 
+## Collecte JVM sans agent (JMX)
+
+Pour les JVM qu'on ne peut pas redémarrer avec l'agent (produit tiers, middleware, app legacy),
+le [jmx-scraper](https://github.com/open-telemetry/opentelemetry-java-contrib/tree/main/jmx-scraper)
+OpenTelemetry tourne **à côté** de la JVM. Il se connecte en JMX/RMI, lit les MBeans à chaque
+intervalle d'export et pousse le résultat en OTLP vers le même Collector. Le seul changement côté
+JVM cible, ce sont les flags JMX distant :
+
+```
+-Dcom.sun.management.jmxremote.port=9010 -Dcom.sun.management.jmxremote.rmi.port=9010
+-Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false
+-Djava.rmi.server.hostname=java-demo-jmx
+```
+
+> ⚠️ Sans authentification ni TLS : acceptable uniquement sur le réseau Docker du lab (le port 9010
+> n'est pas publié). En vrai, activer `jmxremote.authenticate`/`ssl` et passer
+> `OTEL_JMX_USERNAME`/`OTEL_JMX_PASSWORD` au scraper depuis un secret.
+
+Configuration du scraper (`docker-compose.yml`) : `OTEL_JMX_TARGET_SYSTEM=jvm,tomcat`,
+`OTEL_JMX_TARGET_SOURCE=instrumentation` (définitions alignées sur les conventions sémantiques), et
+`OTEL_JMX_CONFIG=/etc/jmx-scraper/gc.yaml` pour une règle maison. D'autres cibles prêtes à l'emploi
+existent (kafka, jetty, wildfly, activemq, cassandra…), et `gc.yaml` montre comment mapper n'importe
+quel MBean.
+
+### Agent vs JMX : ce qu'on obtient (relevé sur `:8889`)
+
+| Besoin | Agent (`job="java-demo"`) | JMX (`job="java-demo-jmx"`) |
+|---|---|---|
+| Heap / non-heap par pool | `jvm_memory_*_bytes` | identique |
+| CPU | `jvm_cpu_recent_utilization_ratio`, `jvm_cpu_time_seconds_total` | identique, plus `jvm_system_cpu_utilization_ratio` et `jvm_system_cpu_load_1m` |
+| Threads | `jvm_thread_count` par `jvm_thread_state` | `jvm_thread_count` total seulement |
+| GC | histogramme `jvm_gc_duration_seconds_*` par pause | cumuls `jvm_gc_collection_count_total`, `jvm_gc_collection_time_seconds_total` (règle `gc.yaml`) |
+| HTTP | histogramme `http_server_request_duration_seconds_*` par route et code → **p50/p95/p99** | compteurs Tomcat `tomcat_request_count_total`, `tomcat_error_count_total` (statut ≥ 400), `tomcat_request_duration_sum_seconds_total` → **latence moyenne seulement**, `tomcat_request_duration_max_seconds` (max depuis le démarrage) |
+| Pool de threads HTTP | — | `tomcat_thread_count`, `tomcat_thread_busy_count`, `tomcat_thread_limit` |
+| Métriques métier (API OTel) | `orders_created_total` | aucune (l'API OTel est no-op sans agent ni SDK) |
+| Descripteurs de fichiers, buffers | — | `jvm_file_descriptor_*`, `jvm_buffer_*` |
+
+Pour une Spring Boot avec Tomcat embarqué, les MBeans Tomcat ne sont publiés qu'avec
+`server.tomcat.mbeanregistry.enabled=true` (variable `SERVER_TOMCAT_MBEANREGISTRY_ENABLED`).
+
+```promql
+# Latence moyenne et taux d'erreurs via JMX
+sum(rate(tomcat_request_duration_sum_seconds_total{job="java-demo-jmx"}[5m])) / sum(rate(tomcat_request_count_total{job="java-demo-jmx"}[5m]))
+sum(rate(tomcat_error_count_total{job="java-demo-jmx"}[5m])) / sum(rate(tomcat_request_count_total{job="java-demo-jmx"}[5m]))
+
+# Saturation du pool de threads Tomcat
+sum(tomcat_thread_busy_count{job="java-demo-jmx"}) / sum(tomcat_thread_limit{job="java-demo-jmx"})
+
+# Temps passé en GC (part du temps)
+sum(rate(jvm_gc_collection_time_seconds_total{job="java-demo-jmx"}[5m]))
+```
+
+## Alerting
+
+Prometheus évalue les règles de [prometheus/rules/java-demo.rules.yml](prometheus/rules/java-demo.rules.yml)
+toutes les 15 s et envoie les alertes à Alertmanager (http://localhost:9093). Elles sont aussi
+visibles dans Grafana (*Alerting › Alert rules*, datasource *Alertmanager*). Aucune notification
+ne sort du lab : le receiver par défaut `lab-null` ne fait rien (voir
+[alertmanager/alertmanager.yml](alertmanager/alertmanager.yml) pour brancher Slack, e-mail ou webhook).
+
+| Alerte | Condition | Sévérité |
+|---|---|---|
+| `JavaDemoMetricsAbsent` | plus de métrique JVM de `java-demo` (≈ 3 min après l'arrêt) | critical |
+| `JavaJmxMetricsAbsent` | plus de métrique JMX de `java-demo-jmx` | critical |
+| `OtelCollectorDown` | cible Collector `up == 0` depuis 1 min | critical |
+| `OtelCollectorDroppingMetrics` | points refusés ou en échec d'export depuis 5 min | warning |
+| `JavaDemoHighErrorRate` | 5xx > 10 % (warning) / > 25 % (critical) depuis 2 min | warning / critical |
+| `JavaDemoHighLatencyP95` | p95 d'une route > 2,5 s depuis 5 min | warning |
+| `JavaDemoHeapUsageHigh` | heap > 90 % du max depuis 5 min (agent et JMX) | warning |
+| `JavaDemoGCTimeHigh` | > 10 % du temps en GC depuis 5 min | warning |
+| `JavaDemoNoOrders` | `orders_created_total` n'augmente plus depuis 5 min | warning |
+
+Les seuils sont au-dessus du régime normal du load-generator (≈ 5 % de 5xx, p95 de `/slow`
+≈ 2,4 s) : en temps normal, **aucune alerte n'est active**. Inhibitions : un critical masque le
+warning de la même alerte ; `JavaDemoMetricsAbsent` masque `JavaDemoNoOrders`.
+
+Déclencher une alerte pour de vrai :
+
+```bash
+docker compose stop java-demo
+```
+
+Environ 3 min plus tard, `JavaDemoMetricsAbsent` est *firing* dans Alertmanager. Pour revenir :
+
+```bash
+docker compose start java-demo
+```
+
+Tests unitaires des règles (10 scénarios) :
+
+```bash
+docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p" -w /p/tests prom/prometheus:v3.6.0 test rules java-demo.rules.test.yml
+```
+
 ## Points d'attention
 
 - Le Collector `contrib` est distroless (ni shell ni curl) : pas de healthcheck Docker possible.
@@ -167,12 +272,15 @@ jvm_thread_count * on (job, instance) group_left (service_version) target_info
 - Traces et logs sont désactivés (`OTEL_TRACES_EXPORTER=none`, `OTEL_LOGS_EXPORTER=none`)
   tant que le lab n'a pas de backend pour eux.
 
-## Modifier le dashboard
+- Le Collector oublie une série 1 min après le dernier export (`metric_expiration: 1m`) : c'est
+  ce qui permet aux alertes d'absence de se déclencher vite.
 
-Le JSON est généré, ne pas l'éditer à la main :
+## Modifier les dashboards
+
+Les JSON sont générés, ne pas les éditer à la main :
 
 ```bash
-python3 grafana/tools/gen_dashboard.py grafana/dashboards/java-demo.json
+python3 grafana/tools/gen_dashboard.py grafana/dashboards
 ```
 
 Grafana recharge le fichier en ~30 s.
