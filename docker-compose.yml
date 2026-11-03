@@ -30,6 +30,58 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # Même app, SANS agent OTel : simule une JVM existante qu'on ne peut pas instrumenter.
+  # Seul le JMX distant est activé ; les métriques sont lues de l'extérieur par jmx-scraper.
+  # Pas d'auth ni de TLS JMX : acceptable uniquement sur ce réseau Docker local (port non publié).
+  java-demo-jmx:
+    image: otel-lab/java-demo:0.1.0
+    depends_on:
+      java-demo:
+        condition: service_started   # garantit que l'image est construite
+    ports:
+      - "8081:8080"
+    environment:
+      JAVA_TOOL_OPTIONS: >-
+        -Dcom.sun.management.jmxremote.port=9010
+        -Dcom.sun.management.jmxremote.rmi.port=9010
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Djava.rmi.server.hostname=java-demo-jmx
+      # Publie les MBeans Tomcat (GlobalRequestProcessor, ThreadPool...) de Tomcat embarqué
+      SERVER_TOMCAT_MBEANREGISTRY_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  jmx-scraper:
+    build:
+      context: ./jmx-scraper
+      args:
+        JMX_SCRAPER_VERSION: "1.61.0-alpha"
+    image: otel-lab/jmx-scraper:1.61.0-alpha
+    environment:
+      OTEL_JMX_SERVICE_URL: service:jmx:rmi:///jndi/rmi://java-demo-jmx:9010/jmxrmi
+      OTEL_JMX_TARGET_SYSTEM: jvm,tomcat
+      OTEL_JMX_TARGET_SOURCE: instrumentation
+      # Règles maison en plus des cibles prédéfinies (GC)
+      OTEL_JMX_CONFIG: /etc/jmx-scraper/gc.yaml
+      OTEL_SERVICE_NAME: java-demo-jmx
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=lab,service.version=0.1.0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      # Contrôle aussi la fréquence de lecture des MBeans
+      OTEL_METRIC_EXPORT_INTERVAL: "10000"
+    depends_on:
+      java-demo-jmx:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
   # Image distroless (ni shell ni curl) : pas de healthcheck Docker possible.
   # Santé exposée sur :13133 et surveillée par Prometheus (up{job="otel-collector"}).
   otel-collector:
@@ -114,12 +166,14 @@ services:
     image: grafana/k6:1.3.0
     command: ["run", "--quiet", "/scripts/script.js"]
     environment:
-      BASE_URL: http://java-demo:8080
+      BASE_URLS: http://java-demo:8080,http://java-demo-jmx:8080
       VUS: "5"
     volumes:
       - ./load-generator/script.js:/scripts/script.js:ro
     depends_on:
       java-demo:
+        condition: service_healthy
+      java-demo-jmx:
         condition: service_healthy
     restart: unless-stopped
 

@@ -1,8 +1,9 @@
-// Trafic continu vers java-demo. Réglable via les variables d'env VUS et DURATION.
+// Trafic continu vers les instances java-demo. Réglable via VUS, DURATION et BASE_URLS.
 import http from 'k6/http';
 import { sleep } from 'k6';
 
-const BASE_URL = __ENV.BASE_URL || 'http://java-demo:8080';
+// Liste séparée par des virgules : une requête part vers chaque instance à chaque itération
+const BASE_URLS = (__ENV.BASE_URLS || 'http://java-demo:8080').split(',');
 
 // Poids relatifs des endpoints
 const ENDPOINTS = [
@@ -30,6 +31,7 @@ function pick() {
 }
 
 export default function () {
-  http.get(`${BASE_URL}${pick()}`, { tags: { name: 'java-demo' } });
+  const requests = BASE_URLS.map((base) => ['GET', `${base}${pick()}`, null, { tags: { name: 'java-demo' } }]);
+  http.batch(requests);
   sleep(Math.random() * 0.5 + 0.1);
 }

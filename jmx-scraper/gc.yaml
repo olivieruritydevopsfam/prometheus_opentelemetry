@@ -1,0 +1,21 @@
+# Règles JMX additionnelles (otel.jmx.config) : la cible "jvm" n'expose pas le GC,
+# car jvm.gc.duration (histogramme par pause) n'est pas reconstituable via JMX.
+# On lit les cumuls du MBean GarbageCollector, sous des noms distincts de la semconv
+# pour ne pas les confondre avec ceux de l'agent.
+rules:
+  - bean: java.lang:type=GarbageCollector,name=*
+    prefix: jvm.gc.collection.
+    metricAttribute:
+      jvm.gc.name: param(name)
+    mapping:
+      CollectionCount:
+        metric: count
+        type: counter
+        unit: "{collection}"
+        desc: Nombre cumulé de collections (MBean GarbageCollector.CollectionCount)
+      CollectionTime:
+        metric: time
+        type: counter
+        sourceUnit: ms
+        unit: s
+        desc: Temps cumulé passé en collection (MBean GarbageCollector.CollectionTime)
