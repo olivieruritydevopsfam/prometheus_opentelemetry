@@ -51,6 +51,18 @@ groups:
             Aucune métrique JVM de java-demo depuis plus de 2 min. L'app est arrêtée,
             l'agent n'exporte plus, ou le Collector ne la ré-expose plus.
 
+      - alert: JavaJmxMetricsAbsent
+        expr: absent_over_time(jvm_thread_count{job="java-demo-jmx"}[1m])
+        for: 1m
+        labels:
+          severity: critical
+          team: lab
+        annotations:
+          summary: "Plus de métriques JMX pour java-demo-jmx"
+          description: >
+            Aucune métrique JVM lue via JMX depuis plus de 2 min : JVM cible arrêtée,
+            connexion JMX/RMI impossible, ou jmx-scraper arrêté.
+
       - alert: OtelCollectorDown
         expr: up{job=~"otel-collector.*"} == 0
         for: 1m

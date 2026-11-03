@@ -79,6 +79,25 @@ tests:
               summary: "java-demo n'envoie plus de métriques"
               description: "Aucune métrique JVM de java-demo depuis plus de 2 min. L'app est arrêtée, l'agent n'exporte plus, ou le Collector ne la ré-expose plus.\n"
 
+  # La JVM collectée via JMX disparaît ; java-demo (agent) continue d'exporter
+  - interval: 1m
+    input_series:
+      - series: 'jvm_thread_count{job="java-demo-jmx", instance="i-2"}'
+        values: '28x4'
+      - series: 'jvm_thread_count{job="java-demo", instance="i-1", jvm_thread_state="runnable", jvm_thread_daemon="false"}'
+        values: '7x10'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: JavaJmxMetricsAbsent
+        exp_alerts:
+          - exp_labels: {job: java-demo-jmx, severity: critical, team: lab}
+            exp_annotations:
+              summary: "Plus de métriques JMX pour java-demo-jmx"
+              description: "Aucune métrique JVM lue via JMX depuis plus de 2 min : JVM cible arrêtée, connexion JMX/RMI impossible, ou jmx-scraper arrêté.\n"
+      - eval_time: 7m
+        alertname: JavaDemoMetricsAbsent
+        exp_alerts: []
+
   # Collector injoignable
   - interval: 1m
     input_series:

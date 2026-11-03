@@ -5,7 +5,8 @@
   "tags": [
     "otel",
     "java",
-    "jvm"
+    "jvm",
+    "agent"
   ],
   "timezone": "browser",
   "editable": true,
@@ -27,11 +28,11 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(jvm_thread_count, job)",
+          "query": "label_values(http_server_request_duration_seconds_count, job)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery",
           "qryType": 1
         },
-        "definition": "label_values(jvm_thread_count, job)",
+        "definition": "label_values(http_server_request_duration_seconds_count, job)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -51,11 +52,11 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(jvm_thread_count{job=~\"$job\"}, instance)",
+          "query": "label_values(http_server_request_duration_seconds_count{job=~\"$job\"}, instance)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery",
           "qryType": 1
         },
-        "definition": "label_values(jvm_thread_count{job=~\"$job\"}, instance)",
+        "definition": "label_values(http_server_request_duration_seconds_count{job=~\"$job\"}, instance)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
