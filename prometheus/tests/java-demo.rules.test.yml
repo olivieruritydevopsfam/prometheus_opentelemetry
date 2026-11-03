@@ -1,0 +1,159 @@
+# Tests unitaires des règles : voir CLAUDE.md pour la commande promtool.
+rule_files:
+  - ../rules/java-demo.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  # Régime normal (≈ 5 % de 5xx) : aucune alerte d'erreur
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/hello", http_response_status_code="200"}'
+        values: '0+95x15'
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/error", http_response_status_code="500", error_type="500"}'
+        values: '0+5x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JavaDemoHighErrorRate
+        exp_alerts: []
+
+  # 14 % de 5xx : warning uniquement
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/error", http_response_status_code="200"}'
+        values: '0+60x15'
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/error", http_response_status_code="500", error_type="500"}'
+        values: '0+10x15'
+      # Le healthcheck ne doit pas diluer le ratio
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/actuator/health", http_response_status_code="200"}'
+        values: '0+1000x15'
+    promql_expr_test:
+      - expr: job:http_server_requests_5xx:ratio5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'job:http_server_requests_5xx:ratio5m{job="java-demo"}'
+            value: 0.14285714285714285
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JavaDemoHighErrorRate
+        exp_alerts:
+          - exp_labels: {job: java-demo, severity: warning, team: lab}
+            exp_annotations:
+              summary: "Taux de 5xx élevé sur java-demo : 14.29%"
+              description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+
+  # 33 % de 5xx : warning et critical
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/error", http_response_status_code="200"}'
+        values: '0+60x15'
+      - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/error", http_response_status_code="500", error_type="500"}'
+        values: '0+30x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: JavaDemoHighErrorRate
+        exp_alerts:
+          - exp_labels: {job: java-demo, severity: critical, team: lab}
+            exp_annotations:
+              summary: "Taux de 5xx critique sur java-demo : 33.33%"
+              description: "Plus de 25 % des requêtes HTTP finissent en 5xx depuis 2 min."
+          - exp_labels: {job: java-demo, severity: warning, team: lab}
+            exp_annotations:
+              summary: "Taux de 5xx élevé sur java-demo : 33.33%"
+              description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+
+  # L'app cesse d'exporter à 4 min
+  - interval: 1m
+    input_series:
+      - series: 'jvm_thread_count{job="java-demo", instance="i-1", jvm_thread_state="runnable", jvm_thread_daemon="false"}'
+        values: '7x4'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: JavaDemoMetricsAbsent
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: JavaDemoMetricsAbsent
+        exp_alerts:
+          - exp_labels: {job: java-demo, severity: critical, team: lab}
+            exp_annotations:
+              summary: "java-demo n'envoie plus de métriques"
+              description: "Aucune métrique JVM de java-demo depuis plus de 2 min. L'app est arrêtée, l'agent n'exporte plus, ou le Collector ne la ré-expose plus.\n"
+
+  # Collector injoignable
+  - interval: 1m
+    input_series:
+      - series: 'up{job="otel-collector", instance="otel-collector:8888"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: OtelCollectorDown
+        exp_alerts:
+          - exp_labels: {job: otel-collector, instance: "otel-collector:8888", severity: critical, team: lab}
+            exp_annotations:
+              summary: "Cible Collector otel-collector:8888 injoignable"
+              description: "Prometheus ne parvient plus à scraper otel-collector:8888 (job otel-collector)."
+
+  # p95 de /slow au-delà de 2,5 s (toutes les requêtes entre 2,5 et 5 s)
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_bucket{job="java-demo", http_route="/slow", le="2.5"}'
+        values: '0x15'
+      - series: 'http_server_request_duration_seconds_bucket{job="java-demo", http_route="/slow", le="5.0"}'
+        values: '0+60x15'
+      - series: 'http_server_request_duration_seconds_bucket{job="java-demo", http_route="/slow", le="+Inf"}'
+        values: '0+60x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: JavaDemoHighLatencyP95
+        exp_alerts:
+          - exp_labels: {job: java-demo, http_route: /slow, severity: warning, team: lab}
+            exp_annotations:
+              summary: "p95 de /slow à 4.875s"
+              description: "La latence p95 de /slow dépasse 2,5 s depuis 5 min (/slow plafonne normalement à 2 s).\n"
+
+  # Heap à 95 % du max
+  - interval: 1m
+    input_series:
+      - series: 'jvm_memory_used_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
+        values: '95x10'
+      - series: 'jvm_memory_limit_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
+        values: '100x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: JavaDemoHeapUsageHigh
+        exp_alerts:
+          - exp_labels: {job: java-demo, instance: i-1, severity: warning, team: lab}
+            exp_annotations:
+              summary: "Heap à 95% sur i-1"
+              description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 5 min : risque d'OutOfMemoryError."
+
+  # 20 % du temps en GC
+  - interval: 1m
+    input_series:
+      - series: 'jvm_gc_duration_seconds_sum{job="java-demo", instance="i-1", jvm_gc_name="G1 Young Generation", jvm_gc_action="end of minor GC"}'
+        values: '0+12x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: JavaDemoGCTimeHigh
+        exp_alerts:
+          - exp_labels: {job: java-demo, instance: i-1, severity: warning, team: lab}
+            exp_annotations:
+              summary: "La JVM passe 20% de son temps en GC"
+              description: "Plus de 10 % du temps en pauses GC depuis 5 min : heap sous-dimensionnée ou fuite mémoire."
+
+  # Plus aucune commande, l'app exporte toujours
+  - interval: 1m
+    input_series:
+      - series: 'orders_created_total{job="java-demo", instance="i-1", product="book"}'
+        values: '0+10x5 50x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: JavaDemoNoOrders
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: JavaDemoNoOrders
+        exp_alerts:
+          - exp_labels: {job: java-demo, severity: warning, team: lab}
+            exp_annotations:
+              summary: "Aucune commande créée depuis 5 min"
+              description: "Le compteur orders_created_total n'augmente plus alors que l'app exporte encore."

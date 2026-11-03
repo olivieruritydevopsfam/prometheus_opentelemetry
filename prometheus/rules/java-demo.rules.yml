@@ -1,0 +1,140 @@
+# Règles d'enregistrement et d'alerte du lab.
+# Seuils calés sur le régime normal du load-generator (5xx ≈ 5 %, p95 /slow ≈ 2,4 s) :
+# aucune alerte ne doit être active quand tout va bien.
+# Tests : prometheus/tests/java-demo.rules.test.yml (promtool test rules).
+
+groups:
+  - name: java-demo.recording
+    rules:
+      - record: job_route:http_server_requests:rate5m
+        expr: >
+          sum by (job, http_route) (
+            rate(http_server_request_duration_seconds_count{http_route!~"/actuator.*"}[5m])
+          )
+
+      - record: job:http_server_requests_5xx:ratio5m
+        expr: >
+          (
+            sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/actuator.*", http_response_status_code=~"5.."}[5m]))
+            or
+            sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/actuator.*"}[5m])) * 0
+          )
+          /
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_route!~"/actuator.*"}[5m]))
+
+      - record: job_route:http_server_request_duration_seconds:p95_5m
+        expr: >
+          histogram_quantile(0.95,
+            sum by (job, http_route, le) (
+              rate(http_server_request_duration_seconds_bucket{http_route!~"/actuator.*"}[5m])
+            )
+          )
+
+      - record: job:jvm_memory_heap_used:ratio
+        expr: >
+          sum by (job, instance) (jvm_memory_used_bytes{jvm_memory_type="heap"})
+          /
+          sum by (job, instance) (jvm_memory_limit_bytes{jvm_memory_type="heap"})
+
+  - name: java-demo.alerts
+    rules:
+      # --- Disponibilité du pipeline ------------------------------------------
+      - alert: JavaDemoMetricsAbsent
+        expr: absent_over_time(jvm_thread_count{job="java-demo"}[1m])
+        for: 1m
+        labels:
+          severity: critical
+          team: lab
+        annotations:
+          summary: "java-demo n'envoie plus de métriques"
+          description: >
+            Aucune métrique JVM de java-demo depuis plus de 2 min. L'app est arrêtée,
+            l'agent n'exporte plus, ou le Collector ne la ré-expose plus.
+
+      - alert: OtelCollectorDown
+        expr: up{job=~"otel-collector.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: lab
+        annotations:
+          summary: "Cible Collector {{ $labels.instance }} injoignable"
+          description: "Prometheus ne parvient plus à scraper {{ $labels.instance }} (job {{ $labels.job }})."
+
+      - alert: OtelCollectorDroppingMetrics
+        expr: >
+          sum by (job) (rate(otelcol_receiver_refused_metric_points_total[5m])) > 0
+          or
+          sum by (job) (rate(otelcol_exporter_send_failed_metric_points_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "Le Collector refuse ou perd des points de métriques"
+          description: "Points refusés par le receiver ou en échec d'export (memory_limiter, exporter saturé...)."
+
+      # --- HTTP ----------------------------------------------------------------
+      - alert: JavaDemoHighErrorRate
+        expr: job:http_server_requests_5xx:ratio5m > 0.25
+        for: 2m
+        labels:
+          severity: critical
+          team: lab
+        annotations:
+          summary: "Taux de 5xx critique sur {{ $labels.job }} : {{ $value | humanizePercentage }}"
+          description: "Plus de 25 % des requêtes HTTP finissent en 5xx depuis 2 min."
+
+      - alert: JavaDemoHighErrorRate
+        expr: job:http_server_requests_5xx:ratio5m > 0.10
+        for: 2m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "Taux de 5xx élevé sur {{ $labels.job }} : {{ $value | humanizePercentage }}"
+          description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+
+      - alert: JavaDemoHighLatencyP95
+        expr: job_route:http_server_request_duration_seconds:p95_5m > 2.5
+        for: 5m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "p95 de {{ $labels.http_route }} à {{ $value | humanizeDuration }}"
+          description: >
+            La latence p95 de {{ $labels.http_route }} dépasse 2,5 s depuis 5 min
+            (/slow plafonne normalement à 2 s).
+
+      # --- JVM -----------------------------------------------------------------
+      - alert: JavaDemoHeapUsageHigh
+        expr: job:jvm_memory_heap_used:ratio > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "Heap à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+          description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 5 min : risque d'OutOfMemoryError."
+
+      - alert: JavaDemoGCTimeHigh
+        expr: sum by (job, instance) (rate(jvm_gc_duration_seconds_sum[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "La JVM passe {{ $value | humanizePercentage }} de son temps en GC"
+          description: "Plus de 10 % du temps en pauses GC depuis 5 min : heap sous-dimensionnée ou fuite mémoire."
+
+      # --- Métier --------------------------------------------------------------
+      - alert: JavaDemoNoOrders
+        expr: sum by (job) (rate(orders_created_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: lab
+        annotations:
+          summary: "Aucune commande créée depuis 5 min"
+          description: "Le compteur orders_created_total n'augmente plus alors que l'app exporte encore."
