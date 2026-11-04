@@ -19,6 +19,7 @@ docker compose up -d --build              # démarrer / reconstruire l'app
 docker compose logs -f otel-collector     # l'exporter debug y logge les lots reçus
 docker compose logs -f jmx-scraper        # connexion JMX et erreurs de règles YAML
 curl -XPOST localhost:9090/-/reload       # recharger prometheus.yml et les règles sans redémarrer
+./scripts/deploy-rules.sh deploy          # règles : promtool check + test, reload, vérification (voir docs/)
 docker compose restart otel-collector     # après modif de otel-collector/config.yaml
 docker compose restart alertmanager       # après modif de alertmanager/alertmanager.yml
 docker compose up -d --build jmx-scraper  # après modif de jmx-scraper/gc.yaml (copié dans l'image)

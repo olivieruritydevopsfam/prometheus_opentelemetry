@@ -1,0 +1,65 @@
+diff --git a/prometheus/rules/java-demo.rules.yml b/prometheus/rules/java-demo.rules.yml
+index aa9bf70..9754aa6 100644
+--- a/prometheus/rules/java-demo.rules.yml
++++ b/prometheus/rules/java-demo.rules.yml
+@@ -98,14 +98,14 @@ groups:
+           description: "Plus de 25 % des requêtes HTTP finissent en 5xx depuis 2 min."
+ 
+       - alert: JavaDemoHighErrorRate
+-        expr: job:http_server_requests_5xx:ratio5m > 0.10
++        expr: job:http_server_requests_5xx:ratio5m > 0.02
+         for: 2m
+         labels:
+           severity: warning
+           team: lab
+         annotations:
+           summary: "Taux de 5xx élevé sur {{ $labels.job }} : {{ $value | humanizePercentage }}"
+-          description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
++          description: "Plus de 2 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+ 
+       - alert: JavaDemoHighLatencyP95
+         expr: job_route:http_server_request_duration_seconds:p95_5m > 2.5
+diff --git a/prometheus/tests/java-demo.rules.test.yml b/prometheus/tests/java-demo.rules.test.yml
+index b0b2584..e5fbb6c 100644
+--- a/prometheus/tests/java-demo.rules.test.yml
++++ b/prometheus/tests/java-demo.rules.test.yml
+@@ -5,7 +5,7 @@ rule_files:
+ evaluation_interval: 15s
+ 
+ tests:
+-  # Régime normal (≈ 5 % de 5xx) : aucune alerte d'erreur
++  # Régime normal (≈ 5 % de 5xx) : au-dessus du seuil d'exercice (2 %), warning
+   - interval: 1m
+     input_series:
+       - series: 'http_server_request_duration_seconds_count{job="java-demo", http_route="/hello", http_response_status_code="200"}'
+@@ -15,7 +15,11 @@ tests:
+     alert_rule_test:
+       - eval_time: 10m
+         alertname: JavaDemoHighErrorRate
+-        exp_alerts: []
++        exp_alerts:
++          - exp_labels: {job: java-demo, severity: warning, team: lab}
++            exp_annotations:
++              summary: "Taux de 5xx élevé sur java-demo : 5%"
++              description: "Plus de 2 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+ 
+   # 14 % de 5xx : warning uniquement
+   - interval: 1m
+@@ -40,7 +44,7 @@ tests:
+           - exp_labels: {job: java-demo, severity: warning, team: lab}
+             exp_annotations:
+               summary: "Taux de 5xx élevé sur java-demo : 14.29%"
+-              description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
++              description: "Plus de 2 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+ 
+   # 33 % de 5xx : warning et critical
+   - interval: 1m
+@@ -60,7 +64,7 @@ tests:
+           - exp_labels: {job: java-demo, severity: warning, team: lab}
+             exp_annotations:
+               summary: "Taux de 5xx élevé sur java-demo : 33.33%"
+-              description: "Plus de 10 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
++              description: "Plus de 2 % des requêtes HTTP finissent en 5xx depuis 2 min (régime normal ≈ 5 %)."
+ 
+   # L'app cesse d'exporter à 4 min
+   - interval: 1m

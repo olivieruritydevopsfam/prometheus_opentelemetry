@@ -56,6 +56,9 @@ grafana/dashboards/        Dashboards JSON (générés)
 grafana/tools/             Générateur des dashboards
 load-generator/script.js   Scénario k6
 scripts/check.sh           Vérification de bout en bout
+scripts/deploy-rules.sh    Validation, déploiement et rechargement des règles (local ou CI)
+bamboo-specs/bamboo.yml    Exemple de plan Bamboo pour les règles
+docs/                      Guides (règles Prometheus en CI) et patch d'exercice
 ```
 
 ## Démarrage / arrêt
@@ -260,6 +263,18 @@ Tests unitaires des règles (10 scénarios) :
 ```bash
 docker run --rm --entrypoint promtool -v "$PWD/prometheus:/p" -w /p/tests prom/prometheus:v3.6.0 test rules java-demo.rules.test.yml
 ```
+
+Modifier une règle, la valider puis la recharger sans redémarrer Prometheus :
+
+```bash
+./scripts/deploy-rules.sh validate   # promtool check + test
+./scripts/deploy-rules.sh deploy     # validate, POST /-/reload, vérification des règles chargées
+```
+
+Le guide [docs/regles-prometheus-ci.md](docs/regles-prometheus-ci.md) explique le chargement
+des règles et le déploiement depuis une CI (exemple Bamboo). Il contient aussi un exercice
+complet : changer un seuil et voir l'effet dans la rangée *Règles et alertes Prometheus* du
+dashboard et dans Grafana Alerting.
 
 ## Points d'attention
 
