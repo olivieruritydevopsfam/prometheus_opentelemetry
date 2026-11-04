@@ -1,0 +1,61 @@
+# Bamboo Specs (YAML) : plan de déploiement des règles Prometheus.
+# Bamboo lit ce fichier dans bamboo-specs/ une fois le dépôt lié au projet avec « Bamboo Specs » activé.
+# Guide : docs/regles-prometheus-ci.md. Toute la logique est dans scripts/deploy-rules.sh,
+# testable en local avant de passer par Bamboo.
+---
+version: 2
+plan:
+  project-key: OBS
+  key: PROMRULES
+  name: Règles Prometheus
+
+# Valeurs par défaut, à surcharger dans les variables du plan (ou de la branche).
+# Bamboo les expose aux scripts sous la forme bamboo_<nom>.
+variables:
+  prom_url: http://localhost:9090
+  # Vide pour le lab si l'agent tourne sur la machine du lab : renseigner alors le chemin local
+  # du dossier monté, ex. /Users/moi/prometheus_opentelemetry/prometheus/rules/
+  # En vrai : prometheus@prom-01.example.org:/etc/prometheus/rules/
+  rules_dest: ""
+
+stages:
+  # Sur toutes les branches : une règle invalide ou un test cassé fait échouer le build
+  - Valider:
+      jobs:
+        - Valider les règles
+  # Déclenchement manuel, et seulement sur main (condition de la tâche)
+  - Déployer:
+      manual: true
+      jobs:
+        - Déployer les règles
+
+Valider les règles:
+  key: VAL
+  tasks:
+    - checkout:
+        force-clean-build: true
+    - script:
+        interpreter: SHELL
+        scripts:
+          - ./scripts/deploy-rules.sh validate
+  requirements:
+    - system.docker.executable   # promtool tourne dans l'image prom/prometheus épinglée
+
+Déployer les règles:
+  key: DEP
+  tasks:
+    - checkout:
+        force-clean-build: true
+    - script:
+        interpreter: SHELL
+        scripts:
+          - |
+            export PROM_URL="${bamboo_prom_url}"
+            export RULES_DEST="${bamboo_rules_dest}"
+            ./scripts/deploy-rules.sh deploy
+        conditions:
+          - variable:
+              equals:
+                planRepository.branchName: main
+  requirements:
+    - system.docker.executable
