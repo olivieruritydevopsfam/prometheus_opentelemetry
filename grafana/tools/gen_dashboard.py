@@ -43,14 +43,20 @@ def ts(title, targets, x, y, w=12, h=8, unit="short", stack=False, desc="", minv
     }
 
 
-def stat(title, expr, x, y, w=6, h=4, unit="short", thresholds=None, desc="", decimals=2):
+def mapping(values):
+    """Value mapping Grafana : {valeur: (texte, couleur)}."""
+    return [{"type": "value", "options": {
+        str(v): {"text": t, "color": c, "index": i} for i, (v, (t, c)) in enumerate(values.items())}}]
+
+
+def stat(title, expr, x, y, w=6, h=4, unit="short", thresholds=None, desc="", decimals=2, mappings=None):
     global pid
     pid += 1
     steps = thresholds or [{"color": "green", "value": None}]
     return {
         "id": pid, "type": "stat", "title": title, "description": desc, "datasource": DS,
         "gridPos": {"x": x, "y": y, "w": w, "h": h},
-        "fieldConfig": {"defaults": {"unit": unit, "decimals": decimals,
+        "fieldConfig": {"defaults": {"unit": unit, "decimals": decimals, "mappings": mappings or [],
                                      "thresholds": {"mode": "absolute", "steps": steps}}, "overrides": []},
         "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
                     "colorMode": "background", "graphMode": "area", "textMode": "auto"},
@@ -157,6 +163,48 @@ panels = [
     stat("Commandes sur la période", f'round(sum(increase(orders_created_total{{{SEL}}}[$__range])))',
          16, 55, w=8, h=8, unit="short", decimals=0,
          desc="increase() extrapole aux bornes de la fenêtre : valeur arrondie, approximative."),
+]
+
+
+def state_timeline(title, expr, legend, x, y, w=12, h=8, mappings=None, desc=""):
+    global pid
+    pid += 1
+    return {
+        "id": pid, "type": "state-timeline", "title": title, "description": desc, "datasource": DS,
+        "gridPos": {"x": x, "y": y, "w": w, "h": h},
+        # Couleur fixe : en mode "thresholds", le state timeline remplace les valeurs par des
+        # tranches de seuils et les value mappings ne s'appliquent plus
+        "fieldConfig": {"defaults": {"mappings": mappings or [],
+                                     "color": {"mode": "fixed", "fixedColor": "green"}},
+                        "overrides": []},
+        "options": {"mergeValues": True, "showValue": "auto", "alignValue": "left", "rowHeight": 0.8,
+                    "legend": {"showLegend": False}, "tooltip": {"mode": "single"}},
+        "targets": [target(expr, legend, "A")],
+    }
+
+
+# --- Règles et alertes : permet de constater dans Grafana l'effet d'un déploiement de règles
+# (scripts/deploy-rules.sh, docs/regles-prometheus-ci.md). Métriques propres à Prometheus (job="prometheus").
+ALERT_STATE = ('max by (alertname, severity) (2 * ALERTS{alertstate="firing"} or ALERTS{alertstate="pending"})'
+               ' or on() label_replace(vector(0), "alertname", "aucune alerte active", "", "")')
+panels += [
+    row("Règles et alertes Prometheus", 63),
+    stat("Règles chargées", 'sum(prometheus_rule_group_rules{job="prometheus"})', 0, 64, decimals=0,
+         desc="Règles d'alerte et d'enregistrement chargées depuis prometheus/rules/*.yml."),
+    stat("Dernier rechargement", 'max(prometheus_config_last_reload_success_timestamp_seconds{job="prometheus"}) * 1000',
+         6, 64, unit="dateTimeFromNow", desc="Horodatage du dernier rechargement réussi (POST /-/reload)."),
+    stat("Rechargement", 'min(prometheus_config_last_reload_successful{job="prometheus"})',
+         12, 64, decimals=0, mappings=mapping({1: ("réussi", "green"), 0: ("refusé", "red")}),
+         desc="Si un fichier est invalide, Prometheus refuse le rechargement et garde les anciennes règles."),
+    stat("Alertes firing", 'count(ALERTS{alertstate="firing"}) or vector(0)', 18, 64, decimals=0,
+         thresholds=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
+    state_timeline("État des alertes", ALERT_STATE, "{{alertname}} {{severity}}", 0, 68,
+                   mappings=mapping({0: ("ok", "green"), 1: ("pending", "orange"), 2: ("firing", "red")}),
+                   desc="pending : condition vraie depuis moins que le « for » de la règle ; firing : envoyée à Alertmanager."),
+    ts("Taux de 5xx évalué par la règle d'enregistrement", [
+        ('job:http_server_requests_5xx:ratio5m{job=~"$job"}', "{{job}}"),
+    ], 12, 68, unit="percentunit", minv=0,
+       desc="Série job:http_server_requests_5xx:ratio5m, comparée aux seuils de JavaDemoHighErrorRate."),
 ]
 
 
