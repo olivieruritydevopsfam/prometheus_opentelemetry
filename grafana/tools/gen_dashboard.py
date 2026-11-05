@@ -209,11 +209,13 @@ panels += [
 
 
 def var(name, label, query):
+    # Pas de allValue ".*" : « All » doit se limiter aux valeurs listées, sinon les panneaux JVM
+    # additionnent java-demo et java-demo-jmx (mêmes noms de métriques)
     return {
         "name": name, "label": label, "type": "query", "datasource": DS,
         "query": {"query": query, "refId": "PrometheusVariableQueryEditor-VariableQuery", "qryType": 1},
         "definition": query, "refresh": 2, "includeAll": True, "multi": True,
-        "allValue": ".*", "current": {"text": "All", "value": "$__all"}, "sort": 1,
+        "current": {"text": "All", "value": "$__all"}, "sort": 1,
     }
 
 

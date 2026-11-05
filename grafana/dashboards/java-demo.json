@@ -36,7 +36,6 @@
         "refresh": 2,
         "includeAll": true,
         "multi": true,
-        "allValue": ".*",
         "current": {
           "text": "All",
           "value": "$__all"
@@ -60,7 +59,6 @@
         "refresh": 2,
         "includeAll": true,
         "multi": true,
-        "allValue": ".*",
         "current": {
           "text": "All",
           "value": "$__all"
