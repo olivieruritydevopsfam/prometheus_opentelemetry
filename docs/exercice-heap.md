@@ -33,11 +33,23 @@ appelle jamais.
 
 ## Étape 1 : regarder l'état de départ
 
-Ouvrez <http://localhost:3000>, dashboard **Java demo — OpenTelemetry** :
+Ouvrez directement le dashboard :
+<http://localhost:3000/d/java-demo-otel/java-demo-e28094-opentelemetry?from=now-15m&to=now>
 
-- le stat *Heap utilisée / max* indique environ 5 à 10 % ;
-- le graphique *Mémoire heap* montre trois courbes : *utilisée* (les dents de scie),
-  *committed* (ce que la JVM a réservé) et *max* (512 Mo).
+Pour y aller à la main : menu **Dashboards → OTel Lab → Java demo — OpenTelemetry**. Le login
+est `admin`, avec le mot de passe de votre fichier `.env`. Au premier affichage, les panneaux
+peuvent rester 20 à 30 s sur « Loading plugin panel... ».
+
+Laissez les filtres *Service* et *Instance* sur **All**. Les deux éléments à regarder sont en
+haut de la page :
+
+- **en haut à droite**, le stat *Heap utilisée / max* indique environ 10 à 20 % ;
+- **juste en dessous, à gauche** (rangée *JVM*), le graphique *Mémoire heap* montre trois
+  courbes : *utilisée* (les dents de scie), *committed* (ce que la JVM a réservé) et *max*
+  (512 Mo, soit `512 MiB` dans Grafana).
+
+Le panneau *État des alertes*, utilisé plus loin, est tout en bas de la page, dans la rangée
+*Règles et alertes Prometheus*.
 
 La règle actuelle se trouve dans `prometheus/rules/java-demo.rules.yml`.
 
@@ -224,7 +236,7 @@ On « corrige la fuite », comme le ferait le correctif d'un développeur ou un 
 curl -XDELETE localhost:8080/leak
 ```
 
-- Le graphique *Mémoire heap* redescend aussitôt. Le stat revient à environ 5 à 10 %.
+- Le graphique *Mémoire heap* redescend aussitôt. Le stat revient à environ 10 à 20 %.
 - Dans les 15 à 30 s, l'alerte disparaît de Prometheus. Le panneau *État des alertes*
   repasse à « aucune alerte active ».
 - Alertmanager marque l'alerte comme résolue.
