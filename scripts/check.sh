@@ -6,6 +6,12 @@ set -uo pipefail
 APP=${APP:-http://localhost:8080}
 PROM=${PROM:-http://localhost:9090}
 GRAFANA=${GRAFANA:-http://localhost:3000}
+# Mêmes identifiants que docker-compose (modèle : .env.example) ; les variables déjà exportées priment
+if [[ -f "$(dirname "$0")/../.env" ]]; then
+  while IFS='=' read -r k v; do
+    [[ $k == GF_ADMIN_USER || $k == GF_ADMIN_PASSWORD ]] && [[ -z ${!k:-} ]] && export "$k=$v"
+  done < "$(dirname "$0")/../.env"
+fi
 GF_AUTH="${GF_ADMIN_USER:-admin}:${GF_ADMIN_PASSWORD:-admin}"
 
 fail=0
