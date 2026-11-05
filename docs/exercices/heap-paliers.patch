@@ -1,0 +1,82 @@
+diff --git a/prometheus/rules/java-demo.rules.yml b/prometheus/rules/java-demo.rules.yml
+index aa9bf70..296ecb7 100644
+--- a/prometheus/rules/java-demo.rules.yml
++++ b/prometheus/rules/java-demo.rules.yml
+@@ -122,13 +122,23 @@ groups:
+       # --- JVM -----------------------------------------------------------------
+       - alert: JavaDemoHeapUsageHigh
+         expr: job:jvm_memory_heap_used:ratio > 0.9
+-        for: 5m
++        for: 2m
++        labels:
++          severity: critical
++          team: lab
++        annotations:
++          summary: "Heap à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
++          description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 2 min : OutOfMemoryError imminente."
++
++      - alert: JavaDemoHeapUsageHigh
++        expr: job:jvm_memory_heap_used:ratio > 0.7
++        for: 2m
+         labels:
+           severity: warning
+           team: lab
+         annotations:
+           summary: "Heap à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+-          description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 5 min : risque d'OutOfMemoryError."
++          description: "La heap utilisée dépasse 70 % du max (-Xmx) depuis 2 min : fuite mémoire probable ou heap trop petite."
+ 
+       - alert: JavaDemoGCTimeHigh
+         expr: sum by (job, instance) (rate(jvm_gc_duration_seconds_sum[5m])) > 0.1
+diff --git a/prometheus/tests/java-demo.rules.test.yml b/prometheus/tests/java-demo.rules.test.yml
+index b0b2584..4eecb2d 100644
+--- a/prometheus/tests/java-demo.rules.test.yml
++++ b/prometheus/tests/java-demo.rules.test.yml
+@@ -130,7 +130,26 @@ tests:
+               summary: "p95 de /slow à 4.875s"
+               description: "La latence p95 de /slow dépasse 2,5 s depuis 5 min (/slow plafonne normalement à 2 s).\n"
+ 
+-  # Heap à 95 % du max
++  # Heap à 80 % : warning seulement (palier 70 %)
++  - interval: 1m
++    input_series:
++      - series: 'jvm_memory_used_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
++        values: '80x10'
++      - series: 'jvm_memory_limit_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
++        values: '100x10'
++    alert_rule_test:
++      - eval_time: 1m
++        alertname: JavaDemoHeapUsageHigh
++        exp_alerts: []
++      - eval_time: 5m
++        alertname: JavaDemoHeapUsageHigh
++        exp_alerts:
++          - exp_labels: {job: java-demo, instance: i-1, severity: warning, team: lab}
++            exp_annotations:
++              summary: "Heap à 80% sur i-1"
++              description: "La heap utilisée dépasse 70 % du max (-Xmx) depuis 2 min : fuite mémoire probable ou heap trop petite."
++
++  # Heap à 95 % : warning et critical en même temps
+   - interval: 1m
+     input_series:
+       - series: 'jvm_memory_used_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
+@@ -138,13 +157,17 @@ tests:
+       - series: 'jvm_memory_limit_bytes{job="java-demo", instance="i-1", jvm_memory_type="heap", jvm_memory_pool_name="G1 Old Gen"}'
+         values: '100x10'
+     alert_rule_test:
+-      - eval_time: 8m
++      - eval_time: 5m
+         alertname: JavaDemoHeapUsageHigh
+         exp_alerts:
++          - exp_labels: {job: java-demo, instance: i-1, severity: critical, team: lab}
++            exp_annotations:
++              summary: "Heap à 95% sur i-1"
++              description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 2 min : OutOfMemoryError imminente."
+           - exp_labels: {job: java-demo, instance: i-1, severity: warning, team: lab}
+             exp_annotations:
+               summary: "Heap à 95% sur i-1"
+-              description: "La heap utilisée dépasse 90 % du max (-Xmx) depuis 5 min : risque d'OutOfMemoryError."
++              description: "La heap utilisée dépasse 70 % du max (-Xmx) depuis 2 min : fuite mémoire probable ou heap trop petite."
+ 
+   # 20 % du temps en GC
+   - interval: 1m

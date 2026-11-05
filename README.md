@@ -58,7 +58,7 @@ load-generator/script.js   Scénario k6
 scripts/check.sh           Vérification de bout en bout
 scripts/deploy-rules.sh    Validation, déploiement et rechargement des règles (local ou CI)
 bamboo-specs/bamboo.yml    Exemple de plan Bamboo pour les règles
-docs/                      Guides (règles Prometheus en CI) et patch d'exercice
+docs/                      Guides (règles Prometheus en CI, exercice heap) et patchs d'exercice
 ```
 
 ## Démarrage / arrêt
@@ -113,6 +113,8 @@ volume `grafana-data` n'est pas modifié : faire `docker compose down -v` pour r
 | `GET /slow` | latence aléatoire de 200 ms à 2 s |
 | `GET /error` | HTTP 500 environ une fois sur trois |
 | `GET /order` | incrémente le compteur métier `orders.created` (attribut `product`) |
+| `POST /leak?mb=N` | garde N Mo en heap (fuite simulée, 1 à 500) ; jamais appelé par le load-generator |
+| `DELETE /leak` | relâche la fuite et lance un GC |
 
 ## Métriques exposées (relevées sur `:8889`)
 
@@ -275,6 +277,11 @@ Le guide [docs/regles-prometheus-ci.md](docs/regles-prometheus-ci.md) explique l
 des règles et le déploiement depuis une CI (exemple Bamboo). Il contient aussi un exercice
 complet : changer un seuil et voir l'effet dans la rangée *Règles et alertes Prometheus* du
 dashboard et dans Grafana Alerting.
+
+Un second exercice, [docs/exercice-heap.md](docs/exercice-heap.md), simule une fuite mémoire :
+découper l'alerte heap en deux paliers (warning 70 %, critical 90 %), la mettre en silence
+avec `amtool`, puis vérifier le retour à la normale. La heap de `java-demo` est fixée à 512 Mo
+(`JDK_JAVA_OPTIONS: -Xmx512m`) pour que la fuite remplisse la heap en quelques secondes.
 
 ## Points d'attention
 
