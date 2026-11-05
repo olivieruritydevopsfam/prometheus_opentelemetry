@@ -138,9 +138,11 @@ Lancez ensuite la validation, comme le ferait la CI :
 ```
 
 **Elle échoue**, et c'est voulu. Le test existant dans `prometheus/tests/java-demo.rules.test.yml`
-attend encore l'ancienne alerte (un warning à 95 %, avec l'ancienne description). La règle du
-lab s'applique : une règle modifiée a besoin de tests à jour. Il faut donc aussi adapter les
-tests. Le plus simple est de prendre la version préparée, qui contient la règle **et** les
+simule une heap à 95 % (à ne pas confondre avec le seuil de 90 % de la règle) et attend
+exactement un warning, avec l'ancienne description. Avec les deux paliers, cette heap à 95 %
+dépasse 70 % et 90 % : la règle produit deux alertes, avec de nouvelles descriptions. Le test
+signale ainsi que le comportement a changé. La règle du lab s'applique : une règle modifiée a
+besoin de tests à jour. Le plus simple est de prendre la version préparée, qui contient la règle **et** les
 tests :
 
 ```bash
