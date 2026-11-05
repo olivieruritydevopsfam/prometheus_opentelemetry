@@ -4,11 +4,15 @@ import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.LongCounter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -51,5 +55,29 @@ public class DemoController {
         String product = PRODUCTS.get(ThreadLocalRandom.current().nextInt(PRODUCTS.size()));
         ordersCreated.add(1, Attributes.of(PRODUCT, product));
         return Map.of("message", "order created", "product", product);
+    }
+
+    // --- Fuite mémoire simulée (exercice heap, docs/exercice-heap.md) ---------
+    // Les blocs restent référencés : le GC ne peut pas les libérer, comme une vraie fuite.
+    // Le load-generator n'appelle jamais ces endpoints.
+    private static final List<byte[]> LEAK = new ArrayList<>();
+
+    @PostMapping("/leak")
+    public synchronized Map<String, Object> leak(@RequestParam(defaultValue = "50") int mb) {
+        if (mb < 1 || mb > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mb doit être entre 1 et 500");
+        }
+        // Blocs de 256 Ko : un bloc de 1 Mo serait « humongous » pour G1 et occuperait 2 Mo
+        for (int i = 0; i < mb * 4; i++) {
+            LEAK.add(new byte[256 * 1024]);
+        }
+        return Map.of("retenuMo", LEAK.size() / 4);
+    }
+
+    @DeleteMapping("/leak")
+    public synchronized Map<String, Object> releaseLeak() {
+        LEAK.clear();
+        System.gc();   // libère tout de suite pour voir la heap redescendre
+        return Map.of("retenuMo", 0);
     }
 }

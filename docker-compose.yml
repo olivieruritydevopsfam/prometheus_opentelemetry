@@ -10,6 +10,9 @@ services:
     ports:
       - "8080:8080"
     environment:
+      # Heap max explicite (sinon 1/4 de la RAM de la VM Docker) ; JDK_JAVA_OPTIONS
+      # s'ajoute à JAVA_TOOL_OPTIONS (agent) au lieu de le remplacer
+      JDK_JAVA_OPTIONS: -Xmx512m
       OTEL_SERVICE_NAME: java-demo
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=lab,service.version=0.1.0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
